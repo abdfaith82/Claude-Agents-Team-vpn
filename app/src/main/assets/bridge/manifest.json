@@ -1,0 +1,11 @@
+{
+  "manifest_version": 2,
+  "name": "Agents Bridge",
+  "version": "1.0",
+  "description": "Lets the app read the visible page text and form fields on request (passwords are never read).",
+  "browser_specific_settings": { "gecko": { "id": "bridge@claudeagents.team" } },
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_idle", "all_frames": false }
+  ],
+  "permissions": ["nativeMessaging", "nativeMessagingFromContent", "geckoViewAddons"]
+}

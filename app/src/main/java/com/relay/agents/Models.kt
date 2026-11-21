@@ -1,0 +1,171 @@
+package com.relay.agents
+
+import org.json.JSONArray
+import org.json.JSONObject
+
+/** مزوّد الذكاء الاصطناعي: Claude بمفتاح مدفوع، والبقية لها طبقات مجانية بمفتاح من موقع المزوّد. */
+enum class Provider(
+    val label: String,
+    val defaultModel: String,
+    val keyUrl: String,
+    val free: Boolean,
+    val endpoint: String = "",
+    /** manual = Web agent (manual): يفتح موقع الدردشة داخل التطبيق ويلصق المستخدم الرد بنفسه (حقل model يحمل رابط الموقع). */
+    val manual: Boolean = false,
+    /** custom = نقطة نهاية متوافقة مع OpenAI يحدّدها المستخدم (Ollama وLM Studio وllama.cpp وvLLM وغيرها). */
+    val custom: Boolean = false
+) {
+    CLAUDE("Claude", "claude-sonnet-4-5", "console.anthropic.com", false),
+    GEMINI("Gemini (free)", "gemini-flash-latest", "aistudio.google.com/apikey", true),
+    GROQ("Groq (free)", "llama-3.3-70b-versatile", "console.groq.com/keys", true,
+        "https://api.groq.com/openai/v1/chat/completions"),
+    OPENROUTER("OpenRouter (free)", "meta-llama/llama-3.3-70b-instruct:free", "openrouter.ai/keys", true,
+        "https://openrouter.ai/api/v1/chat/completions"),
+    MISTRAL("Mistral (free)", "mistral-small-latest", "console.mistral.ai/api-keys", true,
+        "https://api.mistral.ai/v1/chat/completions"),
+    CEREBRAS("Cerebras (free)", "llama-3.3-70b", "cloud.cerebras.ai", true,
+        "https://api.cerebras.ai/v1/chat/completions"),
+    HUGGINGFACE("Hugging Face (free)", "meta-llama/Llama-3.3-70B-Instruct", "huggingface.co/settings/tokens", true,
+        "https://router.huggingface.co/v1/chat/completions"),
+    NVIDIA("NVIDIA NIM (free)", "meta/llama-3.3-70b-instruct", "build.nvidia.com", true,
+        "https://integrate.api.nvidia.com/v1/chat/completions"),
+    COHERE("Cohere (free)", "command-a-03-2025", "dashboard.cohere.com/api-keys", true,
+        "https://api.cohere.ai/compatibility/v1/chat/completions"),
+    ZAI("Z.ai (free)", "glm-4.5-flash", "z.ai/manage-apikey/apikey-list", true,
+        "https://api.z.ai/api/paas/v4/chat/completions"),
+    SAMBANOVA("SambaNova (free)", "Meta-Llama-3.3-70B-Instruct", "cloud.sambanova.ai/apis", true,
+        "https://api.sambanova.ai/v1/chat/completions"),
+    CUSTOM("Custom (OpenAI-compatible)", "", "", true, custom = true),
+    WEB("Web agent (manual)", "https://claude.ai", "", true, manual = true);
+
+    /** كل المزوّدين عدا Claude وGemini والويب يتكلمون بصيغة OpenAI chat/completions. */
+    val openAiCompat: Boolean get() = this != CLAUDE && this != GEMINI && this != WEB
+
+    /** يقبل الصور في الطلب (Claude وGemini). البقية تستلم وصفاً نصياً للصور يولّده وكيل رؤية. */
+    val vision: Boolean get() = this == CLAUDE || this == GEMINI
+}
+
+/** وكيل = اسم + مزوّد + مفتاح API + نموذج. */
+data class AgentConfig(
+    val id: String,
+    val name: String,
+    val apiKey: String,
+    val model: String = Provider.CLAUDE.defaultModel,
+    val enabled: Boolean = true,
+    val provider: Provider = Provider.CLAUDE,
+    /** للوكيل المخصّص فقط: عنوان الخادم (مثل http://192.168.1.5:11434/v1). */
+    val baseUrl: String = ""
+) {
+    /** عنوان chat/completions الفعلي. */
+    fun endpoint(): String = if (provider.custom) {
+        val b = baseUrl.trim().trimEnd('/')
+        if (b.endsWith("/chat/completions")) b else "$b/chat/completions"
+    } else provider.endpoint
+
+    fun toJson() = JSONObject()
+        .put("id", id).put("name", name).put("apiKey", apiKey)
+        .put("model", model).put("enabled", enabled).put("provider", provider.name)
+        .put("baseUrl", baseUrl)
+
+    companion object {
+        fun fromJson(o: JSONObject) = AgentConfig(
+            id = o.getString("id"),
+            name = o.getString("name"),
+            apiKey = o.getString("apiKey"),
+            model = o.optString("model", Provider.CLAUDE.defaultModel),
+            enabled = o.optBoolean("enabled", true),
+            provider = runCatching { Provider.valueOf(o.optString("provider", "CLAUDE")) }
+                .getOrDefault(Provider.CLAUDE),
+            baseUrl = o.optString("baseUrl", "")
+        )
+    }
+}
+
+enum class StepStatus { PENDING, DONE }
+
+data class Step(
+    val title: String,
+    val status: StepStatus = StepStatus.PENDING,
+    val result: String = "",
+    val doneBy: String = "",
+    /** معرّف وكيل مثبّت لهذه الخطوة؛ فارغ = حسب الأدوار والاستراتيجية. */
+    val assignee: String = ""
+) {
+    fun toJson() = JSONObject()
+        .put("title", title).put("status", status.name)
+        .put("result", result).put("doneBy", doneBy).put("assignee", assignee)
+
+    companion object {
+        fun fromJson(o: JSONObject) = Step(
+            o.getString("title"),
+            StepStatus.valueOf(o.optString("status", "PENDING")),
+            o.optString("result"),
+            o.optString("doneBy"),
+            o.optString("assignee")
+        )
+    }
+}
+
+/** مشروع محفوظ = هدف + نقطة استئناف كاملة (خطوات ونتائج وسجل). */
+data class Project(
+    val id: String,
+    val name: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val checkpoint: Checkpoint,
+    val pinned: Boolean = false
+) {
+    val completed: Boolean get() = checkpoint.finalAnswer.isNotEmpty()
+
+    fun toJson() = JSONObject()
+        .put("id", id).put("name", name)
+        .put("createdAt", createdAt).put("updatedAt", updatedAt)
+        .put("checkpoint", checkpoint.toJson()).put("pinned", pinned)
+
+    companion object {
+        fun fromJson(o: JSONObject) = Project(
+            o.getString("id"), o.getString("name"),
+            o.optLong("createdAt"), o.optLong("updatedAt"),
+            Checkpoint.fromJson(o.getJSONObject("checkpoint")),
+            o.optBoolean("pinned", false)
+        )
+    }
+}
+
+/** نقطة الاستئناف: تُحفظ بعد كل خطوة. */
+data class Checkpoint(
+    val goal: String,
+    val steps: List<Step> = emptyList(),
+    val finalAnswer: String = "",
+    val log: List<String> = emptyList(),
+    /** وضع البرمجة: تخطيط هندسي وملفات كاملة وقابلة للتصدير كـ ZIP. */
+    val coding: Boolean = false,
+    /** وضع التفكير العميق: لكل خطوة مسودة ← نقد من وكيل آخر ← تحسين. */
+    val thinking: Boolean = false
+) {
+    val nextIndex: Int get() = steps.indexOfFirst { it.status == StepStatus.PENDING }
+    val finished: Boolean get() = steps.isNotEmpty() && nextIndex == -1
+
+    fun toJson() = JSONObject()
+        .put("goal", goal)
+        .put("steps", JSONArray(steps.map { it.toJson() }))
+        .put("finalAnswer", finalAnswer)
+        .put("log", JSONArray(log.takeLast(200)))
+        .put("coding", coding)
+        .put("thinking", thinking)
+
+    companion object {
+        fun fromJson(o: JSONObject): Checkpoint {
+            val sa = o.optJSONArray("steps") ?: JSONArray()
+            val la = o.optJSONArray("log") ?: JSONArray()
+            return Checkpoint(
+                goal = o.getString("goal"),
+                steps = (0 until sa.length()).map { Step.fromJson(sa.getJSONObject(it)) },
+                finalAnswer = o.optString("finalAnswer"),
+                log = (0 until la.length()).map { la.getString(it) },
+                coding = o.optBoolean("coding", false),
+                thinking = o.optBoolean("thinking", false)
+            )
+        }
+    }
+}

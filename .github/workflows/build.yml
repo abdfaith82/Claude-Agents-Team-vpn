@@ -1,0 +1,64 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install SWIG (OpenVPN3 Java bindings)
+        run: sudo apt-get update -y && sudo apt-get install -y swig
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Accept Android SDK licenses
+        run: |
+          export ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Build Debug APK
+        run: gradle assembleDebug --no-daemon
+
+      - name: Name the APK after the app
+        run: cp app/build/outputs/apk/debug/app-debug.apk Claude-Agents-Team-vpn.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Claude-Agents-Team-vpn
+          path: Claude-Agents-Team-vpn.apk
+          if-no-files-found: error
+
+      - name: Build x86 test APK (for x86 emulators such as ApkOnline)
+        run: |
+          gradle assembleDebug --no-daemon -Pabis=x86,x86_64
+          cp app/build/outputs/apk/debug/app-debug.apk Claude-Agents-Team-vpn-x86.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Claude-Agents-Team-vpn-x86
+          path: Claude-Agents-Team-vpn-x86.apk
+          if-no-files-found: error
+
+      - name: Unit tests (router)
+        run: gradle :app:testDebugUnitTest --no-daemon
