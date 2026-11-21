@@ -16,6 +16,7 @@ android {
     defaultConfig {
         minSdk = 26
         buildConfigField("boolean", "openvpn3", "true")
+        buildConfigField("String", "FLAVOR", "\"skeleton\"")
         val abis = (project.findProperty("abis") as String?)?.split(",")?.map { it.trim() } ?: listOf("arm64-v8a")
         ndk { abiFilters.addAll(abis) }
     }
