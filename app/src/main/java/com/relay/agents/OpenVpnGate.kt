@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import de.blinkt.openvpn.VpnProfile
 import de.blinkt.openvpn.api.IOpenVPNAPIService
 import de.blinkt.openvpn.api.IOpenVPNStatusCallback
 import kotlinx.coroutines.Dispatchers
@@ -67,29 +68,43 @@ object OvpnHub {
     fun flag(code: String): String =
         if (code.length != 2) "🌐" else code.uppercase().map { String(Character.toChars(0x1F1E6 + (it - 'A'))) }.joinToString("")
 
-    /** قائمة VPN Gate العامة (متطوعون). تُرتَّب بالنقاط الأعلى أولاً. */
-    suspend fun fetch() {
+    private fun parse(lines: Sequence<String>): List<GateServer> {
+        val out = mutableListOf<GateServer>()
+        for (l in lines) {
+            if (l.startsWith("*") || l.startsWith("#")) continue
+            val f = l.split(",")
+            if (f.size < 15) continue
+            val cfg = runCatching { String(Base64.decode(f.last().trim(), Base64.DEFAULT)).replace("\r", "") }.getOrNull() ?: continue
+            if (!cfg.contains("remote ")) continue
+            out += GateServer(f[5], f[6], f[1], f[2].toLongOrNull() ?: 0, (f[4].toLongOrNull() ?: 0) / 1_000_000.0, cfg)
+        }
+        return out.sortedByDescending { it.score }
+    }
+
+    /** يعرض آخر قائمة محفوظة فوراً (بلا انتظار الشبكة). يعيد عمرها بالدقائق أو -1 إن لم توجد. */
+    fun loadCache(ctx: Context): Long {
+        val f = File(ctx.filesDir, "vpngate.csv")
+        if (!f.exists()) return -1
+        runCatching { servers = parse(f.readLines().asSequence()) }
+        return (System.currentTimeMillis() - f.lastModified()) / 60_000
+    }
+
+    /** قائمة VPN Gate العامة (متطوعون). تُحفظ محلياً ويُرتَّب الأعلى نقاطاً أولاً. */
+    suspend fun fetch(ctx: Context) {
         loading = true; error = ""
         val r = withContext(Dispatchers.IO) {
             runCatching {
                 val c = URL("https://www.vpngate.net/api/iphone/").openConnection() as HttpURLConnection
-                c.connectTimeout = 15000; c.readTimeout = 40000
-                val out = mutableListOf<GateServer>()
-                c.inputStream.bufferedReader().useLines { lines ->
-                    for (l in lines) {
-                        if (l.startsWith("*") || l.startsWith("#")) continue
-                        val f = l.split(",")
-                        if (f.size < 15) continue
-                        val cfg = runCatching { String(Base64.decode(f.last().trim(), Base64.DEFAULT)).replace("\r", "") }.getOrNull() ?: continue
-                        if (!cfg.contains("remote ")) continue
-                        out += GateServer(f[5], f[6], f[1], f[2].toLongOrNull() ?: 0, (f[4].toLongOrNull() ?: 0) / 1_000_000.0, cfg)
-                    }
-                }
-                out.sortedByDescending { it.score }
+                c.connectTimeout = 20000; c.readTimeout = 90000
+                c.setRequestProperty("Accept-Encoding", "gzip")
+                val text = c.inputStream.bufferedReader().use { it.readText() }
+                val list = parse(text.lineSequence())
+                if (list.isNotEmpty()) runCatching { File(ctx.filesDir, "vpngate.csv").writeText(text) }
+                list
             }
         }
         r.onSuccess { servers = it; if (it.isEmpty()) error = tr("القائمة فارغة حالياً، حاول لاحقاً.") }
-            .onFailure { error = tr("تعذّر جلب القائمة: ") + (it.message ?: it.javaClass.simpleName).take(120) }
+            .onFailure { error = tr("تعذّر جلب القائمة: ") + (it.message ?: it.javaClass.simpleName).take(120) + if (servers.isNotEmpty()) tr(" (تُعرض القائمة المحفوظة)") else "" }
         loading = false
     }
 }
@@ -108,7 +123,13 @@ fun VpnGateCard() {
     var ipBusy by remember { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
 
-    LaunchedEffect(Unit) { installed = hub.installed(ctx); hub.bind(ctx) }
+    LaunchedEffect(Unit) {
+        installed = hub.installed(ctx); hub.bind(ctx)
+        if (hub.servers.isEmpty()) {
+            val age = withContext(Dispatchers.IO) { hub.loadCache(ctx) }
+            if (age < 0 || age > 60) hub.fetch(ctx)
+        }
+    }
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         if (r.resultCode == Activity.RESULT_OK) pending?.invoke() else hub.error = tr("لم يُمنح الإذن")
@@ -138,11 +159,13 @@ fun VpnGateCard() {
     SoftCard {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(tr("اختيار دولة (OpenVPN · VPN Gate)"), style = MaterialTheme.typography.titleMedium)
+            Text(tr("النواة: ") + (if (VpnProfile.doUseOpenVPN3(ctx)) "OpenVPN3" else "OpenVPN2 (exec)") + " · build " + BuildConfig.BUILD_STAMP, style = MaterialTheme.typography.labelSmall)
+            if (hub.loading) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text(tr("جلب القائمة من vpngate.net قد يستغرق حتى دقيقة..."), style = MaterialTheme.typography.labelSmall) }
             Text(tr("خوادم عامة مجانية يديرها متطوعون، وتغطي دولاً كثيرة. تعمل بنواة OpenVPN المدمجة في التطبيق، والنفق هنا لكل الجهاز. لا تستخدمها للحسابات الحساسة."),
                 style = MaterialTheme.typography.bodySmall)
             run {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(enabled = !hub.loading, onClick = { scope.launch { hub.fetch() } }) {
+                    Button(enabled = !hub.loading, onClick = { scope.launch { hub.fetch(ctx) } }) {
                         Text(if (hub.loading) tr("⏳ جارٍ الجلب…") else tr("جلب الخوادم"))
                     }
                     OutlinedButton(onClick = { runCatching { hub.service?.disconnect(); hub.current = "" } }) { Text(tr("قطع الاتصال")) }

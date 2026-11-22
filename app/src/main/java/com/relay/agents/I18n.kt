@@ -42,6 +42,9 @@ fun trf(ar: String, vararg args: Any?): String = I18n.trf(ar, *args)
 /** قاموس الإنجليزية (المفتاح = النص العربي الأصلي). منفصل ليسهل اختباره بلا Compose. */
 object Translations {
     val EN: Map<String, String> = mapOf(
+        "النواة: " to "Core: ",
+        "جلب القائمة من vpngate.net قد يستغرق حتى دقيقة..." to "Fetching the list from vpngate.net may take up to a minute...",
+        " (تُعرض القائمة المحفوظة)" to " (showing the saved list)",
         "فحص عنوان IP والدولة" to "Check IP address & country",
         "تعذّر الفحص: " to "Check failed: ",
         "عرض سجل OpenVPN" to "Show OpenVPN log",

@@ -9,6 +9,8 @@ import java.io.File
 class RelayApp : ICSOpenVPNApplication() {
     override fun onCreate() {
         super.onCreate()
+        // نفرض OpenVPN3 في كل العمليات (مسار exec لا يعمل لأن مكتبات native لا تُستخرج).
+        runCatching { de.blinkt.openvpn.core.Preferences.getDefaultSharedPreferences(this).edit().putBoolean("ovpn3", true).commit() }
         // في عملية :openvpn نكتب سجل النواة إلى ملف ليظهر في شاشة VPN (يفيد في تشخيص الأعطال).
         if (Build.VERSION.SDK_INT >= 28 && Application.getProcessName().endsWith(":openvpn")) {
             val lf = File(filesDir, "ovpn.log")

@@ -16,6 +16,7 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+        buildConfigField("String", "BUILD_STAMP", "\"${System.getenv("GITHUB_SHA")?.take(7) ?: "local"}\"")
         // GeckoView ثقيل: نكتفي بمعمارية arm64 (هواتف اليوم) لتصغير الحجم.
         // الافتراضي arm64؛ نسخة الاختبار على محاكيات x86 تُبنى بـ -Pabis=x86,x86_64
         val abis = (project.findProperty("abis") as String?)?.split(",")?.map { it.trim() } ?: listOf("arm64-v8a")
@@ -46,6 +47,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
