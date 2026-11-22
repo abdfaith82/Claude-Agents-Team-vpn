@@ -102,13 +102,24 @@ object VpnHub {
         }
     }
 
-    /** عنوان IP الذي يراه العالم لهذا التطبيق (يستعلم من api.ipify.org عند الضغط فقط). */
+    /** عنوان IP الذي يراه العالم مع الدولة والمدينة والمزوّد (يستعلم عند الضغط فقط). */
     suspend fun checkIp(): String = withContext(Dispatchers.IO) {
+        fun get(u: String): JSONObject {
+            val c = URL(u).openConnection() as HttpURLConnection
+            c.connectTimeout = 8000; c.readTimeout = 8000; c.useCaches = false
+            c.setRequestProperty("Connection", "close")
+            return c.inputStream.bufferedReader().use { JSONObject(it.readText()) }
+        }
         runCatching {
-            val c = URL("https://api.ipify.org").openConnection()
-            c.connectTimeout = 8000; c.readTimeout = 8000
-            c.getInputStream().bufferedReader().use { it.readText().trim() }
-        }.getOrElse { "—" }
+            val j = get("https://ipwho.is/")
+            if (!j.optBoolean("success", true)) error("ipwho")
+            OvpnHub.flag(j.optString("country_code")) + " " + j.optString("country") + " — " + j.optString("city") +
+                "\nIP: " + j.optString("ip") + "\nISP: " + (j.optJSONObject("connection")?.optString("isp") ?: "—")
+        }.recoverCatching {
+            val j = get("https://ipapi.co/json/")
+            OvpnHub.flag(j.optString("country_code")) + " " + j.optString("country_name") + " — " + j.optString("city") +
+                "\nIP: " + j.optString("ip") + "\nISP: " + j.optString("org")
+        }.getOrElse { tr("تعذّر الفحص: ") + (it.message ?: it.javaClass.simpleName).take(80) }
     }
 }
 
@@ -199,8 +210,8 @@ fun VpnTab(vm: RelayViewModel) {
                 if (VpnHub.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 if (VpnHub.error.isNotEmpty()) Text(VpnHub.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 if (up) {
-                    OutlinedButton(onClick = { scope.launch { VpnHub.exitIp = VpnHub.checkIp() } }) { Text(tr("فحص عنوان IP الظاهر")) }
-                    if (VpnHub.exitIp.isNotEmpty()) SelectionContainer { Text("IP: " + VpnHub.exitIp, fontFamily = FontFamily.Monospace) }
+                    OutlinedButton(onClick = { scope.launch { VpnHub.exitIp = VpnHub.checkIp() } }) { Text(tr("فحص عنوان IP والدولة")) }
+                    if (VpnHub.exitIp.isNotEmpty()) SelectionContainer { Text(VpnHub.exitIp, fontFamily = FontFamily.Monospace) }
                 }
             }
         }

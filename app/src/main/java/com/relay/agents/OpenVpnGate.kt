@@ -24,6 +24,11 @@ import de.blinkt.openvpn.api.IOpenVPNStatusCallback
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -98,6 +103,10 @@ fun VpnGateCard() {
     var pending by remember { mutableStateOf<(() -> Unit)?>(null) }
     var skip by remember { mutableIntStateOf(0) }
     var chosen by remember { mutableStateOf("") }
+    var showLog by remember { mutableStateOf(false) }
+    var logText by remember { mutableStateOf("") }
+    var ipBusy by remember { mutableStateOf(false) }
+    val clipboard = LocalClipboardManager.current
 
     LaunchedEffect(Unit) { installed = hub.installed(ctx); hub.bind(ctx) }
 
@@ -140,6 +149,18 @@ fun VpnGateCard() {
                 }
                 if (hub.status.isNotEmpty()) Text(trf("الحالة: %s", hub.status) + (if (hub.current.isNotEmpty()) " — " + hub.current else ""),
                     style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(enabled = !ipBusy, onClick = { ipBusy = true; scope.launch { VpnHub.exitIp = VpnHub.checkIp(); ipBusy = false } }) {
+                    Text(if (ipBusy) tr("⏳ جارٍ الفحص…") else tr("فحص عنوان IP والدولة"))
+                }
+                if (VpnHub.exitIp.isNotEmpty()) SelectionContainer { Text(VpnHub.exitIp, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium) }
+                TextButton(onClick = {
+                    showLog = !showLog
+                    if (showLog) logText = runCatching { File(ctx.filesDir, "ovpn.log").readLines().takeLast(60).joinToString("\n") }.getOrDefault("")
+                }) { Text(if (showLog) tr("إخفاء سجل OpenVPN") else tr("عرض سجل OpenVPN")) }
+                if (showLog) {
+                    SelectionContainer { Text(logText.ifEmpty { tr("لا يوجد سجل بعد.") }, style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace) }
+                    if (logText.isNotEmpty()) OutlinedButton(onClick = { clipboard.setText(AnnotatedString(logText)) }) { Text(tr("نسخ السجل")) }
+                }
                 val groups = hub.servers.groupBy { it.country }.entries.sortedByDescending { e -> e.value.maxOf { it.score } }
                 if (groups.isNotEmpty()) {
                     Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
