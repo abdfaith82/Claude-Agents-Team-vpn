@@ -226,7 +226,8 @@ public class VpnProfile implements Serializable, Cloneable {
 
     public static boolean doUseOpenVPN3(Context c) {
         SharedPreferences prefs = Preferences.getDefaultSharedPreferences(c);
-        boolean useOpenVPN3 = prefs.getBoolean("ovpn3", true) // التطبيق المضيف لا يستخرج مكتبات native، فمسار OpenVPN2 (exec) لا يعمل؛ نستخدم OpenVPN3 داخل العملية;
+        // التطبيق المضيف لا يستخرج مكتبات native فمسار OpenVPN2 (exec) لا يعمل؛ نستخدم OpenVPN3 داخل العملية
+        boolean useOpenVPN3 = prefs.getBoolean("ovpn3", true);
         if (!BuildConfig.openvpn3)
             useOpenVPN3 = false;
         return useOpenVPN3;
